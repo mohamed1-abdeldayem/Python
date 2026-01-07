@@ -304,6 +304,189 @@ def show_charts_page():
         )
         st.plotly_chart(fig_pie, use_container_width=True)
 
+def show_user_data_page():
+    st.markdown('<div class="main-header">👥 Registered Users</div>', unsafe_allow_html=True)
+    st.markdown('<p style="color: #666; margin-bottom: 2rem;">View all registered users in the system</p>', unsafe_allow_html=True)
+    
+    try:
+        # Fetch all users from Supabase
+        response = supabase.table('users').select('id, username, email, created_at').execute()
+        
+        if response.data:
+            df_users = pd.DataFrame(response.data)
+            
+            # Format the created_at column
+            if 'created_at' in df_users.columns:
+                df_users['created_at'] = pd.to_datetime(df_users['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Display metrics
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-label">👥 Total Users</div>
+                    <div class="metric-value">{len(df_users)}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                # Get most recent registration
+                latest_user = df_users.iloc[-1]['username'] if len(df_users) > 0 else "N/A"
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-label">🆕 Latest User</div>
+                    <div style="font-size: 1.2rem; font-weight: 600; color: #667eea; margin-top: 0.5rem;">
+                        {latest_user}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col3:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-label">📊 Active Session</div>
+                    <div style="font-size: 1.2rem; font-weight: 600; color: #667eea; margin-top: 0.5rem;">
+                        {st.session_state.username}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("### 📋 User Database")
+            
+            # Display users table
+            st.dataframe(
+                df_users,
+                use_container_width=True,
+                height=500,
+                hide_index=True
+            )
+            
+            # Download button
+            csv = df_users.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Users Data as CSV",
+                data=csv,
+                file_name='users_data.csv',
+                mime='text/csv'
+            )
+        else:
+            st.info("No users found in the database.")
+            
+    except Exception as e:
+        st.error(f"Error fetching user data: {str(e)}")
+
+def show_update_profile_page():
+    st.markdown('<div class="main-header">⚙️ Update Profile</div>', unsafe_allow_html=True)
+    st.markdown('<p style="color: #666; margin-bottom: 2rem;">Update your account information</p>', unsafe_allow_html=True)
+    
+    # Get current user info
+    user_info = get_user_info(st.session_state.username)
+    
+    if user_info:
+        current_email, created_at = user_info
+        
+        # Display current info
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">👤 Current Username</div>
+                <div style="font-size: 1.2rem; font-weight: 600; color: #667eea; margin-top: 0.5rem;">
+                    {st.session_state.username}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">📧 Current Email</div>
+                <div style="font-size: 1.2rem; font-weight: 600; color: #667eea; margin-top: 0.5rem;">
+                    {current_email}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Update form
+        st.markdown("### 🔄 Update Information")
+        
+        with st.form("update_form"):
+            new_email = st.text_input("New Email", value=current_email, placeholder="Enter new email")
+            new_username = st.text_input("New Username", value=st.session_state.username, placeholder="Enter new username")
+            
+            st.markdown("---")
+            st.markdown("#### 🔒 Change Password (Optional)")
+            
+            current_password = st.text_input("Current Password", type="password", placeholder="Enter current password")
+            new_password = st.text_input("New Password", type="password", placeholder="Enter new password")
+            confirm_password = st.text_input("Confirm New Password", type="password", placeholder="Confirm new password")
+            
+            col1, col2, col3 = st.columns([1, 1, 1])
+            
+            with col2:
+                submit_button = st.form_submit_button("💾 Update Profile", use_container_width=True)
+            
+            if submit_button:
+                try:
+                    # Update email and username
+                    update_data = {}
+                    
+                    if new_email != current_email:
+                        update_data['email'] = new_email
+                    
+                    if new_username != st.session_state.username:
+                        # Check if new username already exists
+                        existing = supabase.table('users').select('username').eq('username', new_username).execute()
+                        if existing.data:
+                            st.error("❌ Username already exists!")
+                            st.stop()
+                        update_data['username'] = new_username
+                    
+                    # Update password if provided
+                    if current_password:
+                        # Verify current password
+                        success, message = login_user(st.session_state.username, current_password)
+                        if not success:
+                            st.error("❌ Current password is incorrect!")
+                            st.stop()
+                        
+                        if new_password and confirm_password:
+                            if new_password != confirm_password:
+                                st.error("❌ New passwords do not match!")
+                                st.stop()
+                            elif len(new_password) < 6:
+                                st.error("❌ Password must be at least 6 characters!")
+                                st.stop()
+                            else:
+                                update_data['password'] = hash_password(new_password)
+                        elif new_password or confirm_password:
+                            st.error("❌ Please fill both new password fields!")
+                            st.stop()
+                    
+                    # Perform update if there are changes
+                    if update_data:
+                        supabase.table('users').update(update_data).eq('username', st.session_state.username).execute()
+                        
+                        # Update session state if username changed
+                        if 'username' in update_data:
+                            st.session_state.username = new_username
+                        
+                        st.success("✅ Profile updated successfully!")
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        st.info("ℹ️ No changes to update.")
+                        
+                except Exception as e:
+                    st.error(f"❌ Error updating profile: {str(e)}")
+    else:
+        st.error("Could not fetch user information.")
+
 def show_dataset_page():
     st.markdown('<div class="main-header">📁 Dataset Explorer</div>', unsafe_allow_html=True)
     st.markdown('<p style="color: #666; margin-bottom: 2rem;">View and analyze your data</p>', unsafe_allow_html=True)
@@ -482,6 +665,14 @@ else:
             st.session_state.current_page = "Dataset"
             st.rerun()
         
+        if st.button("👥 Registered Users", key="users_data", use_container_width=True):
+            st.session_state.current_page = "Users"
+            st.rerun()
+        
+        if st.button("⚙️ Update Profile", key="update_profile", use_container_width=True):
+            st.session_state.current_page = "Update"
+            st.rerun()
+        
         st.markdown('<div class="section-header">Account</div>', unsafe_allow_html=True)
         
         if st.button("🚪 Logout", key="logout", use_container_width=True):
@@ -492,5 +683,9 @@ else:
     
     if st.session_state.current_page == "Charts":
         show_charts_page()
-    else:
+    elif st.session_state.current_page == "Dataset":
         show_dataset_page()
+    elif st.session_state.current_page == "Users":
+        show_user_data_page()
+    elif st.session_state.current_page == "Update":
+        show_update_profile_page()
